@@ -156,3 +156,45 @@ async def info(file: UploadFile = File(...)) -> JSONResponse:
     data = await read_upload(file)
     reader = open_pdf(data, file.filename or "document.pdf")
     return JSONResponse({"pages": len(reader.pages), "size": len(data)})
+
+
+# ---------------------------------------------------------------------------
+# Routes : fusion et extraction
+# ---------------------------------------------------------------------------
+
+@router.post("/merge")
+async def merge(files: List[UploadFile] = File(...)) -> Response:
+    """Fusionne plusieurs PDF, dans l'ordre d'envoi."""
+    if len(files) < 2:
+        raise fail(422, "Ajoutez au moins deux PDF à fusionner.")
+    if len(files) > MAX_FILES:
+        raise fail(422, f"Trop de fichiers (maximum : {MAX_FILES}).")
+
+    writer = PdfWriter()
+    total_bytes = 0
+    total_pages = 0
+    for upload in files:
+        data = await read_upload(upload)
+        total_bytes += len(data)
+        if total_bytes > MAX_UPLOAD_BYTES:
+            raise fail(413, f"Fichiers trop volumineux (limite totale : {MAX_UPLOAD_MB:g} Mo).")
+        reader = open_pdf(data, upload.filename or "document.pdf")
+        writer.append(reader)
+        total_pages += len(reader.pages)
+
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return pdf_response(buffer.getvalue(), "fileflow-fusion.pdf", total_pages)
+
+
+@router.post("/extract")
+async def extract(file: UploadFile = File(...), pages: str = Form(...)) -> Response:
+    """Cree un nouveau PDF avec les pages demandees (ex : « 1-3,5,8- »)."""
+    data = await read_upload(file)
+    reader = open_pdf(data, file.filename or "document.pdf")
+    indices = parse_pages(pages, len(reader.pages))
+    name = f"{safe_stem(file.filename)}-extrait.pdf"
+    return pdf_response(build_pdf(reader, indices), name, len(indices))
+
+
+app.include_router(router)
