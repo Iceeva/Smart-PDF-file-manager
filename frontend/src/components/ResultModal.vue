@@ -88,7 +88,7 @@ function onKey(event) {
             <dt>Taille</dt>
             <dd>{{ formatSize(state.result.size) }}</dd>
           </div>
-          <div class="xp">
+          <div v-if="state.result.xp" class="xp">
             <dt>Expérience</dt>
             <dd>+{{ shownXp }} XP</dd>
           </div>
