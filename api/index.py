@@ -197,4 +197,78 @@ async def extract(file: UploadFile = File(...), pages: str = Form(...)) -> Respo
     return pdf_response(build_pdf(reader, indices), name, len(indices))
 
 
+# ---------------------------------------------------------------------------
+# Routes : reorganisation et decoupe
+# ---------------------------------------------------------------------------
+
+@router.post("/reorder")
+async def reorder(file: UploadFile = File(...), order: str = Form(...)) -> Response:
+    """Reecrit le PDF dans le nouvel ordre (ex : « 3,1,2,4- »).
+
+    Toutes les pages doivent apparaitre une fois : aucune page n'est perdue
+    ou dupliquee par erreur.
+    """
+    data = await read_upload(file)
+    reader = open_pdf(data, file.filename or "document.pdf")
+    total = len(reader.pages)
+    indices = parse_pages(order, total)
+    if len(indices) != total or len(set(indices)) != total:
+        raise fail(422, f"Le nouvel ordre doit contenir chacune des {total} pages une seule fois.")
+    name = f"{safe_stem(file.filename)}-reordonne.pdf"
+    return pdf_response(build_pdf(reader, indices), name, total)
+
+
+@router.post("/split")
+async def split(
+    file: UploadFile = File(...),
+    ranges: Optional[str] = Form(None),
+    every: Optional[int] = Form(None),
+) -> Response:
+    """Decoupe un PDF en plusieurs fichiers livres dans une archive ZIP.
+
+    - `ranges` : une plage par fichier, ex « 1-3,4-4,5- » donne 3 fichiers.
+    - `every`  : un fichier toutes les N pages.
+    """
+    data = await read_upload(file)
+    reader = open_pdf(data, file.filename or "document.pdf")
+    total = len(reader.pages)
+
+    parts: List[range] = []
+    if ranges and ranges.strip():
+        tokens = [t for t in re.split(r"[,;]", ranges) if t.strip()]
+        parts = [parse_range(token, total) for token in tokens]
+    elif every is not None:
+        if every < 1:
+            raise fail(422, "Le nombre de pages par fichier doit être au moins 1.")
+        parts = [range(i, min(i + every, total)) for i in range(0, total, every)]
+    else:
+        raise fail(422, "Indiquez des plages ou un nombre de pages par fichier.")
+
+    if not parts:
+        raise fail(422, "Aucune partie à créer.")
+    if len(parts) > MAX_PARTS:
+        raise fail(422, f"Trop de fichiers demandés (maximum : {MAX_PARTS}).")
+
+    stem = safe_stem(file.filename)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for number, part in enumerate(parts, start=1):
+            first, last = part.start + 1, part.stop
+            label = f"p{first}" if first == last else f"p{first}-{last}"
+            archive.writestr(
+                f"{stem}-partie-{number:02d}-{label}.pdf",
+                build_pdf(reader, list(part)),
+            )
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{stem}-decoupe.zip"',
+            "X-Parts": str(len(parts)),
+            "X-Pages": str(total),
+        },
+    )
+
+
 app.include_router(router)
