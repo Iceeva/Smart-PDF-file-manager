@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { addXp, state } from './store'
 import { sfx } from './audio'
+import { reducedMotion } from './fx'
 
 // Orchestre une mission : requete a l'API et animation jouees en parallele,
 // puis attribution de l'XP et ouverture de la fenetre de victoire.
@@ -42,7 +43,8 @@ export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // Joue une animation Web Animations et attend sa fin (ou son annulation).
 export function play(el, keyframes, options, tracker) {
-  const animation = el.animate(keyframes, options)
+  const opts = reducedMotion() ? { ...options, duration: 1, delay: 0 } : options
+  const animation = el.animate(keyframes, opts)
   if (tracker) tracker.push(animation)
   return animation.finished.catch(() => {})
 }
